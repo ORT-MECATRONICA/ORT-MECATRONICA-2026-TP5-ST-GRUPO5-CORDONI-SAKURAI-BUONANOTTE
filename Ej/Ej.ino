@@ -32,7 +32,6 @@ typedef enum {
 
 //funciones
 void cicloLogica();
-void gmtConfigurar(int offset);
 void medirTemperatura();
 void maquinaDeEstados();
 void imprimirTemperaturaYHora();
