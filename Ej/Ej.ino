@@ -1,12 +1,17 @@
 // TP5 Firebase - Cordoni, Sakurai, Buonanotte
 
 //defines e includes
+#define ENABLE_USER_AUTH
+#define ENABLE_DATABASE
+
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <ESP32Time.h>
-
+#include <FirebaseClient.h>
+#include "time.h"
 
 #define SWITCH_1 35
 #define SWITCH_2 34
@@ -18,7 +23,14 @@
 #define SSID "MECA-IoT"
 #define PASS "IoT$2026"
 
-hw_timer_t* timer = NULL;  //declaración de timer de hardware
+#define DATABASE_URL "https://st-esp-project-2ed88-default-rtdb.firebaseio.com"
+#define WEB_API_KEY "AIzaSyCc5yeF_D4kaD5plZTnv71nW4IdOTTFw0w"
+
+#define USER_MAIL "grupo5@gmail.com"
+#define USER_PASS "argentina"
+
+#define TREINTA_SEGUNDOS 30000
+
 
 //tipos de variables
 typedef enum {
@@ -26,7 +38,7 @@ typedef enum {
   P2,
   espera1,
   espera2,
-  esperaAumentoCilco,
+  esperaAumentoCiclo,
   esperaDisminucionCiclo
 } tipoEstado;
 
@@ -37,6 +49,9 @@ void maquinaDeEstados();
 void imprimirTemperaturaYHora();
 void imprimirCiclo();
 void actualizarHora();
+void subirDatos();
+unsigned long getTime();
+void processData(AsyncResult &aResult);
 
 //config
 DHT dht(DHTPIN, DHTTYPE);
@@ -45,8 +60,28 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /*reset*/ U8X8_PIN_NONE);
 
 ESP32Time rtc;
 
-const char* ntpServer = "pool.ntp.org";
-int gmtOffset = 4;
+FirebaseApp app;
+
+UserAuth user_auth(WEB_API_KEY, USER_MAIL, USER_PASS);  //autenticación de firebase (mail & pass)
+
+//permiten que la comunicación se de de forma asincrónica
+WiFiClientSecure ssl_client;  //el "canal" de comunicación: esp <--> friebase
+using AsyncClient = AsyncClientClass;
+AsyncClient aClient(ssl_client);
+
+RealtimeDatabase Database;  //el servicio a conectarse donde escribir los datos
+
+//objeto json con sus subpartes
+JsonWriter writer;
+object_t jsonData;        //
+object_t objTemperatura;  //
+object_t objTimestamp;    // para guardar la info del json
+object_t objFecha;        //
+object_t objHora;         //
+
+
+const char *ntpServer = "pool.ntp.org";
+int gmtOffset = -3;
 int gmtOffsetSegundos = 0;
 
 //variables
@@ -58,10 +93,22 @@ int SW2;
 int horaActual = 0;
 int minutoActual = 0;
 
-float umbral = 28.0;
 float hic;
 
-int ciclo = 30;
+unsigned long ciclo = TREINTA_SEGUNDOS;
+
+unsigned long ultimaSubida = 0;
+unsigned long timestamp = 0;
+
+//paths (dónde se guarda la info)
+String uid;
+String databasePath;
+
+String parentPath;  //path "padre"
+
+String tempPath = "/temperature";  // "sub-
+String timePath = "/timestamp";    //  paths"
+
 
 void setup() {
   //inicio
@@ -105,9 +152,28 @@ void setup() {
   }
 
   rtc.offset = gmtOffsetSegundos;
+
+  //https (conexión)
+  ssl_client.setInsecure();
+  ssl_client.setConnectionTimeout(1000);
+  ssl_client.setHandshakeTimeout(5);
+
+  //inicio de sesión
+  initializeApp(
+    aClient,             //cliente
+    app,                 //objeto sesión firebase
+    getAuth(user_auth),  //datos de sesión
+    processData,         //función
+    "Auth"               //tarea
+  );
+
+  app.getApp<RealtimeDatabase>(Database);  //conecta la app según la rtdb "database"
+  Database.url(DATABASE_URL);              //a qué db conectarse
 }
 
 void loop() {
+  app.loop();  //necesario
+
   actualizarHora();
 
   SW1 = digitalRead(SWITCH_1);
@@ -116,6 +182,8 @@ void loop() {
   medirTemperatura();
 
   maquinaDeEstados();
+
+  subirDatos();
 }
 
 void medirTemperatura() {  //mide la temperatura en una función para que no se trabe el
@@ -168,7 +236,7 @@ void maquinaDeEstados() {
       imprimirCiclo();
       //
       if (SW1 == HIGH && SW2 == HIGH) {
-        ciclo += 30;
+        ciclo += TREINTA_SEGUNDOS;
         cicloLogica();
         Serial.println(ciclo);
         estado = P2;
@@ -181,7 +249,7 @@ void maquinaDeEstados() {
       imprimirCiclo();
       //
       if (SW1 == HIGH && SW2 == HIGH) {
-        ciclo -= 30;
+        ciclo -= TREINTA_SEGUNDOS;
         cicloLogica();
         Serial.println(gmtOffset);
         estado = P2;
@@ -194,7 +262,7 @@ void maquinaDeEstados() {
 }
 
 void cicloLogica() {
-  if (ciclo <= 30) ciclo = 30;  //condicional corto
+  if (ciclo <= TREINTA_SEGUNDOS) ciclo = TREINTA_SEGUNDOS;  //condicional corto
 }
 
 void imprimirTemperaturaYHora() {
@@ -205,11 +273,6 @@ void imprimirTemperaturaYHora() {
   char stringTemp[10];
   sprintf(stringTemp, "%.1f C", hic);
   u8g2.drawStr(50, 20, stringTemp);
-
-  u8g2.drawStr(0, 20, "VU: ");
-  char stringUmb[10];
-  sprintf(stringUmb, "%.1f C", umbral);
-  u8g2.drawStr(50, 20, stringUmb);
 
   u8g2.sendBuffer();
 }
@@ -222,7 +285,7 @@ void imprimirCiclo() {
   u8g2.drawStr(0, 20, "Ciclo: ");
   char stringCiclo[10];
   sprintf(stringCiclo, "%.1d :", ciclo);
-  u8g2.drawStr(30, 20, stringCiclo);
+  u8g2.drawStr(TREINTA_SEGUNDOS, 20, stringCiclo);
 
   u8g2.sendBuffer();
 }
@@ -230,4 +293,56 @@ void imprimirCiclo() {
 void actualizarHora() {
   horaActual = rtc.getHour();
   minutoActual = rtc.getMinute();
+}
+
+void subirDatos() {
+
+  //comprobar si fb "está listo" (terminado auth user y ready para trabajar)
+  if (!app.ready()) {
+    return;
+  }
+
+  //comprobar que no haya algún valor de temp
+  if (isnan(hic)) {
+    return;
+  }
+
+  if (millis() - ultimaSubida >= ciclo) {
+    timestamp = getTime();  //tiempo actual
+    if (timestamp == 0) {   //si no puede devuelve cero
+      return;
+    }
+
+    ultimaSubida = millis();
+
+    uid = app.getUid().c_str();                        //uid
+    databasePath = "/UsersData/" + uid + "/readings";  //db path que no estaba definido
+
+    parentPath = databasePath + "/" + String(timestamp);  //base
+
+    writer.create(objTemperatura, tempPath, hic);
+    writer.create(objTimestamp, timePath, timestamp);
+    writer.join(
+      jsonData,
+      2,
+      objTemperatura,
+      objTimestamp);
+  }
+}
+
+unsigned long getTime() {
+
+  time_t now;
+  struct tm timeinfo;
+
+  if (!getLocalTime(&timeinfo)) {
+    return 0;
+  }
+
+  time(&now);
+
+  return now;
+}
+
+void processData(AsyncResult &aResult) {
 }
