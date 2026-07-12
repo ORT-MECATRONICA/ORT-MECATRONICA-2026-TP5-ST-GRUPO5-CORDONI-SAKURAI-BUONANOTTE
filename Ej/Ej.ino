@@ -48,7 +48,6 @@ void medirTemperatura();
 void maquinaDeEstados();
 void imprimirTemperaturaYHora();
 void imprimirCiclo();
-void actualizarHora();
 void subirDatos();
 unsigned long getTime();
 void processData(AsyncResult &aResult);
@@ -90,10 +89,8 @@ tipoEstado estado = P1;
 int SW1;
 int SW2;
 
-int horaActual = 0;
-int minutoActual = 0;
-
-float hic;
+float hic = NAN;  //para que no se inicie como "0" y se registre
+float umbral = 28.0;
 
 unsigned long ciclo = TREINTA_SEGUNDOS;
 
@@ -106,9 +103,10 @@ String databasePath;
 
 String parentPath;  //path "padre"
 
-String tempPath = "/temperature";  // "sub-
-String timePath = "/timestamp";    //  paths"
-
+String tempPath = "/temperature";  //
+String timePath = "/timestamp";    // "sub-
+String datePath = "/date";         // paths"
+String hourPath = "/time";         //
 
 void setup() {
   //inicio
@@ -149,32 +147,34 @@ void setup() {
   struct tm timeinfo;
   if (getLocalTime(&timeinfo)) {
     rtc.setTimeStruct(timeinfo);
+    Serial.println("Hora sincronizada");
+  } else {
+    Serial.println("No se pudo obtener la hora");
   }
+}
 
-  rtc.offset = gmtOffsetSegundos;
+// rtc.offset = gmtOffsetSegundos;
 
-  //https (conexión)
-  ssl_client.setInsecure();
-  ssl_client.setConnectionTimeout(1000);
-  ssl_client.setHandshakeTimeout(5);
+//https (conexión)
+ssl_client.setInsecure();
+ssl_client.setConnectionTimeout(1000);
+ssl_client.setHandshakeTimeout(5);
 
-  //inicio de sesión
-  initializeApp(
-    aClient,             //cliente
-    app,                 //objeto sesión firebase
-    getAuth(user_auth),  //datos de sesión
-    processData,         //función
-    "Auth"               //tarea
-  );
+//inicio de sesión
+initializeApp(
+  aClient,             //cliente
+  app,                 //objeto sesión firebase
+  getAuth(user_auth),  //datos de sesión
+  processData,         //función
+  "Auth"               //tarea
+);
 
-  app.getApp<RealtimeDatabase>(Database);  //conecta la app según la rtdb "database"
-  Database.url(DATABASE_URL);              //a qué db conectarse
+app.getApp<RealtimeDatabase>(Database);  //conecta la app según la rtdb "database"
+Database.url(DATABASE_URL);              //a qué db conectarse
 }
 
 void loop() {
   app.loop();  //necesario
-
-  actualizarHora();
 
   SW1 = digitalRead(SWITCH_1);
   SW2 = digitalRead(SWITCH_2);
@@ -251,7 +251,7 @@ void maquinaDeEstados() {
       if (SW1 == HIGH && SW2 == HIGH) {
         ciclo -= TREINTA_SEGUNDOS;
         cicloLogica();
-        Serial.println(gmtOffset);
+        Serial.println(ciclo);
         estado = P2;
       }
       if (SW1 == LOW && SW2 == LOW) {
@@ -274,6 +274,11 @@ void imprimirTemperaturaYHora() {
   sprintf(stringTemp, "%.1f C", hic);
   u8g2.drawStr(50, 20, stringTemp);
 
+  u8g2.drawStr(0, 50, "VU: ");
+  char stringUmbral[10];
+  sprintf(stringUmbral, "%.1f C", umbral);
+  u8g2.drawStr(50, 50, stringUmbral);
+
   u8g2.sendBuffer();
 }
 
@@ -284,15 +289,10 @@ void imprimirCiclo() {
 
   u8g2.drawStr(0, 20, "Ciclo: ");
   char stringCiclo[10];
-  sprintf(stringCiclo, "%.1d :", ciclo);
-  u8g2.drawStr(TREINTA_SEGUNDOS, 20, stringCiclo);
+  sprintf(stringCiclo, "%lu segs", ciclo / 1000);
+  u8g2.drawStr(30, 20, stringCiclo);
 
   u8g2.sendBuffer();
-}
-
-void actualizarHora() {
-  horaActual = rtc.getHour();
-  minutoActual = rtc.getMinute();
 }
 
 void subirDatos() {
@@ -315,20 +315,29 @@ void subirDatos() {
 
     ultimaSubida = millis();
 
+    //actualizar hora
+    String fecha = rtc.getTime("%Y-%m-%d");  //año-mes-día
+    String hora = rtc.getTime("%H:%M:%S");   //hora:minuto:segundo
+
     uid = app.getUid().c_str();                        //uid
     databasePath = "/UsersData/" + uid + "/readings";  //db path que no estaba definido
 
     parentPath = databasePath + "/" + String(timestamp);  //base
 
     //crea el json (temp & timestamp; y los une)
-    writer.create(objTemperatura, tempPath, hic);
+    writer.create(objTemperatura, tempPath, hic);  // (obj, path, var)
     writer.create(objTimestamp, timePath, timestamp);
+    writer.create(objFecha, datePath, string_t(fecha.c_str()));  //stringt(x.c_str()) porque se
+    writer.create(objHora, hourPath, string_t(hora.c_str()));    //necesitan strings de C, no arduino
     writer.join(
       jsonData,  //dónde
-      2,         //cuántos
-      objTemperatura,
-      objTimestamp);
-
+      4,         //cuántos
+      //
+      objTemperatura,  // }
+      objTimestamp,    // } obj-
+      objFecha,        // } etos
+      objHora          // }
+    );
 
     //envía la info
     Database.set<object_t>(
@@ -341,6 +350,7 @@ void subirDatos() {
   }
 }
 
+//se usa para el timestamp en vez de .getEpoch()
 unsigned long getTime() {
 
   time_t now;
