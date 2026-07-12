@@ -320,13 +320,24 @@ void subirDatos() {
 
     parentPath = databasePath + "/" + String(timestamp);  //base
 
+    //crea el json (temp & timestamp; y los une)
     writer.create(objTemperatura, tempPath, hic);
     writer.create(objTimestamp, timePath, timestamp);
     writer.join(
-      jsonData,
-      2,
+      jsonData,  //dónde
+      2,         //cuántos
       objTemperatura,
       objTimestamp);
+
+
+    //envía la info
+    Database.set<object_t>(
+      aClient,          //cliente
+      parentPath,       //ruta de guardado (main path)
+      jsonData,         //dónde están guardados los datos (json) temp y timestamp
+      processData,      //f() de errores, respuestas, etc.
+      "RTDB_Send_Data"  //nombre de la tarea (para el serial monitor)
+    );
   }
 }
 
@@ -345,4 +356,17 @@ unsigned long getTime() {
 }
 
 void processData(AsyncResult &aResult) {
+
+  if (!aResult.isResult()) {  //ver si hay algún resultado nuevo
+    return;
+  }
+
+  if (aResult.isError()) {
+    Serial.print("Error: ");
+    Serial.println(aResult.error().message());
+  }
+
+  if (aResult.available()) {
+    Serial.println("Operacion completada");
+  }
 }
