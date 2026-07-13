@@ -46,7 +46,7 @@ typedef enum {
 void cicloLogica();
 void medirTemperatura();
 void maquinaDeEstados();
-void imprimirTemperaturaYHora();
+void imprimirTemperaturaYUmbral();
 void imprimirCiclo();
 void subirDatos();
 unsigned long getTime();
@@ -199,14 +199,14 @@ void medirTemperatura() {  //mide la temperatura en una función para que no se 
 void maquinaDeEstados() {
   switch (estado) {
     case P1:
-      imprimirTemperaturaYHora();
+      imprimirTemperaturaYUmbral();
       //
       if (SW1 == LOW && SW2 == LOW) {
         estado = espera1;
       }
       break;
     case espera1:
-      imprimirTemperaturaYHora();
+      imprimirTemperaturaYUmbral();
       //
       if (SW1 == HIGH && SW2 == HIGH) {
         estado = P2;
@@ -265,7 +265,7 @@ void cicloLogica() {
   if (ciclo <= TREINTA_SEGUNDOS) ciclo = TREINTA_SEGUNDOS;  //condicional corto
 }
 
-void imprimirTemperaturaYHora() {
+void imprimirTemperaturaYUmbral() {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_ncenB08_tr);
 
