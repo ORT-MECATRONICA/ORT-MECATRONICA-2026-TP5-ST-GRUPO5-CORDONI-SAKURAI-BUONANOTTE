@@ -20,7 +20,7 @@
 #define DHTPIN 23
 #define DHTTYPE DHT11
 
-#define SSID "MECA-IoT"
+#define SSID "MECA-IoT-V2"
 #define PASS "IoT$2026"
 
 #define DATABASE_URL "https://st-esp-project-2ed88-default-rtdb.firebaseio.com"
@@ -151,26 +151,25 @@ void setup() {
   } else {
     Serial.println("No se pudo obtener la hora");
   }
-}
 
-// rtc.offset = gmtOffsetSegundos;
+  // rtc.offset = gmtOffsetSegundos;
 
-//https (conexión)
-ssl_client.setInsecure();
-ssl_client.setConnectionTimeout(1000);
-ssl_client.setHandshakeTimeout(5);
+  //https (conexión)
+  ssl_client.setInsecure();
+  ssl_client.setConnectionTimeout(1000);
+  ssl_client.setHandshakeTimeout(5);
 
-//inicio de sesión
-initializeApp(
-  aClient,             //cliente
-  app,                 //objeto sesión firebase
-  getAuth(user_auth),  //datos de sesión
-  processData,         //función
-  "Auth"               //tarea
-);
+  //inicio de sesión
+  initializeApp(
+    aClient,             //cliente
+    app,                 //objeto sesión firebase
+    getAuth(user_auth),  //datos de sesión
+    processData,         //función
+    "Auth"               //tarea
+  );
 
-app.getApp<RealtimeDatabase>(Database);  //conecta la app según la rtdb "database"
-Database.url(DATABASE_URL);              //a qué db conectarse
+  app.getApp<RealtimeDatabase>(Database);  //conecta la app según la rtdb "database"
+  Database.url(DATABASE_URL);              //a qué db conectarse
 }
 
 void loop() {
